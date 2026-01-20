@@ -35,9 +35,9 @@ class MriFeatureDataset(Dataset):
         label_lookup = self.response_data.set_index("MIRRIR_DCE-MRI")["pCR-Breast"].to_dict()
         # 3. Filter for folders that have the required 3 timings
         self.samples = []
-        unique_elements = self.response_data["MIRRIR_DCE-MRI"].dropna().unique()
-        all_folders = [f for f in os.listdir(self.feature_path) if os.path.isdir(os.path.join(self.feature_path, f))]
-        # print(f"Total unique patients in response data: {len(unique_elements)} ")
+        unique_elements = sorted(self.response_data["MIRRIR_DCE-MRI"].dropna().unique())
+        print(f"Total unique patients in response data: {len(unique_elements)} ")
+        all_folders = sorted([f for f in os.listdir(self.feature_path) if os.path.isdir(os.path.join(self.feature_path, f))])        # print(f"Total unique patients in response data: {len(unique_elements)} ")
         for element in unique_elements:
             subject_id = str(element).split('_')[0]
             actual_folder = next((f for f in all_folders if f.startswith(subject_id)), None)
@@ -46,7 +46,7 @@ class MriFeatureDataset(Dataset):
                 subdir_path = os.path.join(self.feature_path, actual_folder) 
                 
                 if os.path.isdir(subdir_path):
-                    files = os.listdir(subdir_path)    
+                    files = sorted(os.listdir(subdir_path))    
                     # Find the specific files for each timing
                     # Using 'lower()' and 'in' to handle cases like 'PRE', 'pre', or 'PRE_reversedStack'
                     pre_file = next((f for f in files if "pre" in f.lower() and f.endswith('.png')), None)
@@ -55,8 +55,21 @@ class MriFeatureDataset(Dataset):
 
                     if pre_file and po1_file and po2_file:
                         raw_label = label_lookup.get(element)
-                        pcr_label = 1 if str(raw_label).strip() == "Complete" else 0
+                        if raw_label is None:
+                            print(f"Warning: No label found for patient {element}")
+                            continue
                         
+                        pcr_label = None
+                        response = str(raw_label).strip()
+                        print(f"Patient {element} has raw label: '{raw_label}'")
+                        if response == "Complete":
+                            pcr_label = 1
+                        elif response == "Incomplete":
+                            pcr_label = 0
+                        else:
+                            print(f"Warning: Unrecognized label '{raw_label}' for patient {element}")
+                            continue
+
                         paths = [
                             os.path.join(subdir_path, pre_file),
                             os.path.join(subdir_path, po1_file),
@@ -117,8 +130,6 @@ class MriFeatureDataset(Dataset):
 
         return vector, torch.tensor(label, dtype=torch.long)
 
-
-
 class MriFeatureDataset2(Dataset):
 
     def __init__(self, feature_path, response_path, model_config_path, checkpoint_path, transform=None):
@@ -128,22 +139,20 @@ class MriFeatureDataset2(Dataset):
         # 1. Initialize the Model (Feature Extractor)
         with open(model_config_path, 'r') as f:
             model_config = yaml.safe_load(f)
-            
         self.model = MultiModalAtlas(args=None, model_config=model_config, embed_dim=384, multiscale_feats=True)
-        
-        # Load weights
         state_dict = load_file(checkpoint_path)
         self.model.load_state_dict(state_dict, strict=False)
         self.model.eval()
+
         # 2. Load Excel & Map Labels
         self.response_data = pd.read_excel(response_path)
         # Dictionary to map 'Complete' -> 1, else -> 0
         label_lookup = self.response_data.set_index("MIRRIR_DCE-MRI")["pCR-Breast"].to_dict()
+        
         # 3. Filter for folders that have the required 3 timings
         self.samples = []
-        unique_elements = self.response_data["MIRRIR_DCE-MRI"].dropna().unique()
-        all_folders = [f for f in os.listdir(self.feature_path) if os.path.isdir(os.path.join(self.feature_path, f))]
-        # print(f"Total unique patients in response data: {len(unique_elements)} ")
+        unique_elements = sorted(self.response_data["MIRRIR_DCE-MRI"].dropna().unique())
+        all_folders = sorted([f for f in os.listdir(self.feature_path) if os.path.isdir(os.path.join(self.feature_path, f))])        
         for element in unique_elements:
             subject_id = str(element).split('_')[0]
             actual_folder = next((f for f in all_folders if f.startswith(subject_id)), None)
@@ -152,7 +161,7 @@ class MriFeatureDataset2(Dataset):
                 subdir_path = os.path.join(self.feature_path, actual_folder) 
                 
                 if os.path.isdir(subdir_path):
-                    files = os.listdir(subdir_path)    
+                    files = sorted(os.listdir(subdir_path)) 
                     # Find the specific files for each timing
                     # Using 'lower()' and 'in' to handle cases like 'PRE', 'pre', or 'PRE_reversedStack'
                     pre_file = next((f for f in files if "pre" in f.lower() and f.endswith('.png')), None)
@@ -161,8 +170,18 @@ class MriFeatureDataset2(Dataset):
 
                     if pre_file and po1_file and po2_file:
                         raw_label = label_lookup.get(element)
-                        pcr_label = 1 if str(raw_label).strip() == "Complete" else 0
                         
+                        pcr_label = None
+                        response = str(raw_label).strip()
+                        print(f"Patient {element} has raw label: '{raw_label}'")
+                        if response == "Complete":
+                            pcr_label = 1
+                        elif response == "Incomplete":
+                            pcr_label = 0
+                        else:
+                            print(f"Warning: Unrecognized label '{raw_label}' for patient {element}")
+                            continue
+
                         paths = [
                             os.path.join(subdir_path, pre_file),
                             os.path.join(subdir_path, po1_file),
@@ -258,13 +277,36 @@ def visualize_mri_samples(dataset, num_samples=2):
     print(f"Visualization saved as 'mri_extraction_check.png'. You can download this to view it.")
     plt.show()
 
+def debug_mri_dataloader(dataset, num_to_check=5):
+    """
+    Prints the file paths and labels stored in the dataset's sample list.
+    """
+    print(f"\n{'='*30} DATASET AUDIT {'='*30}")
+    print(f"Total samples found: {len(dataset)}")
+    print(f"{'Index':<5} | {'Label':<6} | {'Paths (Pre, Po1, Po2)'}")
+    print("-" * 80)
+
+    for i in range(min(num_to_check, len(dataset))):
+        img_paths, label = dataset.samples[i]
+        
+        # Format the paths to show only the patient folder and filename for readability
+        readable_paths = [os.path.join(p.split('/')[-2], p.split('/')[-1]) for p in img_paths]
+        
+        label_str = "1 (pCR)" if label == 1 else "0 (Non-pCR)"
+        
+        print(f"{i:<5} | {label_str:<10} | {readable_paths[0]}")
+        print(f"{'':<5} | {'':<10} | {readable_paths[1]}")
+        print(f"{'':<5} | {'':<10} | {readable_paths[2]}")
+        print("-" * 80)
+
+
 # --- TESTING SECTION ---
 if __name__ == "__main__":
     # 1. Setup paths
     BASE_DIR = "/home/aaron.l"
     dataset = MriFeatureDataset(
         feature_path=f"{BASE_DIR}/FeatureExtraction/MriExtraction/mri_features",
-        response_path=f"{BASE_DIR}/VisualizeDir/MultimodalPilotDataset_v1_DEID.xlsx",
+        response_path=f"{BASE_DIR}/FeatureExtraction/MriExtraction/MultimodalPilotDataset_v1_DEID_wImages_final.xlsx",
         model_config_path=f"{BASE_DIR}/Pillar/model.config.yaml",
         checkpoint_path=f"{BASE_DIR}/Pillar/pillar-pretrain/model.safetensors",
         transform=transforms.Compose([
@@ -296,3 +338,5 @@ if __name__ == "__main__":
         print("="*30)
     else:
         print("Dataset is empty. Check your directory paths.")
+    
+    debug_mri_dataloader(dataset, num_to_check=len(dataset))

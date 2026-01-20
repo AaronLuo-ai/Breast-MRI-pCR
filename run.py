@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import re
 import wandb
+import argparse
 import pytorch_lightning as L
 import os
 from sklearn.metrics import accuracy_score, roc_auc_score, f1_score, matthews_corrcoef
@@ -27,8 +28,12 @@ def get_dist(labels):
 def run_mlp_cross_validation(base_path, excel_path, config_path, ckpt_path, 
                              batch_size, lr, max_epochs, weight_decay,
                              residual_dropout, head_dropout, hidden_dim, stack_rgb):
+
+    L.seed_everything(42, workers=True)
+
     full_dataset = None
     dir_name = "rgb_stack" if stack_rgb else "rgb_concat"
+
     if stack_rgb:
         # 1. Initialize Dataset (RGB stacking of Pre, Po1, Po2)
         full_dataset = MriFeatureDataset(
@@ -47,8 +52,6 @@ def run_mlp_cross_validation(base_path, excel_path, config_path, ckpt_path,
         )
 
     cv_auc_scores = []
-
-    # 2. Extract Raw Features (Concatenating Pre, Po1, Po2)
     all_features = []
     all_labels = []
     all_fold_reports = []
@@ -66,6 +69,8 @@ def run_mlp_cross_validation(base_path, excel_path, config_path, ckpt_path,
 
     # 3. Setup Stratified 5-Fold
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+    torch.cuda.empty_cache()
     
     for fold, (train_idx, val_idx) in enumerate(skf.split(X, Y)):
         # --- CLASS DISTRIBUTION CHECK ---
@@ -92,8 +97,8 @@ def run_mlp_cross_validation(base_path, excel_path, config_path, ckpt_path,
         train_ds = TensorDataset(torch.from_numpy(X_train_scaled).float(), torch.from_numpy(y_train).long())
         val_ds = TensorDataset(torch.from_numpy(X_val_scaled).float(), torch.from_numpy(y_val).long())
 
-        train_loader = DataLoader(train_ds, batch_size=batch_size, sampler=None, shuffle=False)
-        val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
+        train_loader = DataLoader(train_ds, batch_size=batch_size, sampler=None, shuffle=False, drop_last=True)
+        val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, drop_last=True)
 
         # 7. Logger & Model (input_dim is now 3456)
         wandb_logger = WandbLogger(
@@ -166,7 +171,7 @@ def run_mlp_cross_validation(base_path, excel_path, config_path, ckpt_path,
     avg_auc = np.mean(cv_auc_scores)
     std_auc = np.std(cv_auc_scores)
 
-    base_output_path = "/scratch/aaron.l/output"
+    base_output_path = "/scratch/aaron.l/deterministic_output"
     folder_name = f"{dir_name}_avg_auc_{avg_auc:.3f}_bs_{batch_size}_lr_{lr}_wd_{weight_decay}_rd_{residual_dropout}_hd_{head_dropout}"
     final_report_dir = os.path.join(base_output_path, folder_name)
     
@@ -189,45 +194,27 @@ def run_mlp_cross_validation(base_path, excel_path, config_path, ckpt_path,
 
 
 if __name__ == "__main__":
-    L.seed_everything(42, workers=True)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--lr", type=float, default=3e-4)
+    parser.add_argument("--batch_size", type=int, default=4)
+    parser.add_argument("--residual_dropout", type=float, default=0.5)
+    parser.add_argument("--head_dropout", type=float, default=0.1)
+    parser.add_argument("--stack_rgb", action="store_true") # Flag: --stack_rgb makes it True
+    args = parser.parse_args()
+
     run_mlp_cross_validation(
         base_path="/home/aaron.l/FeatureExtraction/MriExtraction/mri_features",
-        excel_path="/home/aaron.l/VisualizeDir/MultimodalPilotDataset_v1_DEID.xlsx",
+        excel_path="/home/aaron.l/FeatureExtraction/MriExtraction/MultimodalPilotDataset_v1_DEID_wImages_final.xlsx",
         config_path="/home/aaron.l/Pillar/model.config.yaml",
         ckpt_path="/home/aaron.l/Pillar/pillar-pretrain/model.safetensors",
-        batch_size=4,
-        lr=3e-5,
-        max_epochs=200,
+        batch_size=args.batch_size,
+        lr=args.lr,
+        max_epochs=100,
         weight_decay=1e-2,
-        residual_dropout=0.1,
-        head_dropout=0.1,
+        residual_dropout=args.residual_dropout,
+        head_dropout=args.head_dropout,
         hidden_dim=256,
-        stack_rgb=False
+        stack_rgb=args.stack_rgb
     )
-
-    # lr_arr = [3e-5, 1e-4, 3e-4, 1e-3]
-    # batch_size_arr = [4, 8, 16]
-    # residual_dropout_arr = [0.5, 0.1, 0.2, 0.3, 0.0]
-    # head_dropout_arr = [0.5, 0.1, 0.2, 0.3, 0.0] # Renamed from dead_dropout
-
-    # for lr in lr_arr:
-    #     for batch_size in batch_size_arr:
-    #         for residual_dropout in residual_dropout_arr:
-    #             for head_dropout in head_dropout_arr:
-    #                 for stack_rgb in [True, False]:
-    #                     run_mlp_cross_validation(
-    #                         base_path="/home/aaron.l/FeatureExtraction/MriExtraction/mri_features",
-    #                         excel_path="/home/aaron.l/VisualizeDir/MultimodalPilotDataset_v1_DEID.xlsx",
-    #                         config_path="/home/aaron.l/Pillar/model.config.yaml",
-    #                         ckpt_path="/home/aaron.l/Pillar/pillar-pretrain/model.safetensors",
-    #                         batch_size=batch_size,
-    #                         lr=lr,
-    #                         max_epochs=200,
-    #                         weight_decay=1e-2,
-    #                         residual_dropout=residual_dropout,
-    #                         head_dropout=head_dropout,
-    #                         hidden_dim=256,
-    #                         stack_rgb=stack_rgb
-    #                     )
 
 # TODO: Use RGB stacking PRE PO1 PO2 as 3 channels instead of flattening. 
