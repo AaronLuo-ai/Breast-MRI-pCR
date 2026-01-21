@@ -37,3 +37,18 @@ pillar-pretrain/
     ├── reports/            # Generated Excel metrics per fold
     ├── checkpoint/         # Saved .ckpt files (Best Val AUC)
     └── run.py              # Main training/validation entry point
+
+```
+
+
+
+## ⚙️ Detailed Setup Instructions
+```bash
+# Clone the parent framework
+git clone [https://github.com/YalaLab/pillar-pretrain.git](https://github.com/YalaLab/pillar-pretrain.git)
+cd pillar-pretrain
+
+# Clone this module into the parent directory
+git clone [https://github.com/AaronLuo-ai/Breast-MRI-pCR.git](https://github.com/AaronLuo-ai/Breast-MRI-pCR.git)
+```
+
