@@ -15,7 +15,6 @@ This repository contains a deep learning pipeline designed to predict **Patholog
 The model handles high-dimensional features (3,456 dims) using a residual architecture to ensure robust gradient flow:
 - **Residual Blocks**: Two layers with skip connections and LeakyReLU activation.
 - **Regularization**: 
-  - **Gaussian Noise**: $\sigma=0.01$ added to features during training to improve generalization.
   - **Dropout**: Dual-stage (0.5 in residual blocks, 0.3 in classification head).
   - **Weight Decay**: L2 regularization ($1e-2$) via Adam optimizer.
 - **Loss Function**: `BCEWithLogitsLoss`.
