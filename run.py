@@ -16,7 +16,7 @@ import pytorch_lightning as L
 import os
 from sklearn.metrics import accuracy_score, roc_auc_score, f1_score, matthews_corrcoef
 # Assuming these are in your local files
-from data.dataloader import MriFeatureDataset, MriFeatureDataset2
+from data.rgb_dataset import RGBConcatDataset, RGBStackDataset
 from model.mlp import PcrPredictor
 
 def get_dist(labels):
@@ -36,7 +36,7 @@ def run_mlp_cross_validation(base_path, excel_path, config_path, ckpt_path,
 
     if stack_rgb:
         # 1. Initialize Dataset (RGB stacking of Pre, Po1, Po2)
-        full_dataset = MriFeatureDataset(
+        full_dataset = RGBStackDataset(
             feature_path=base_path,
             response_path=excel_path,
             model_config_path=config_path,
@@ -44,7 +44,7 @@ def run_mlp_cross_validation(base_path, excel_path, config_path, ckpt_path,
         )
     else: 
         # RGB concatenation of Pre, Po1, Po2
-        full_dataset = MriFeatureDataset2(
+        full_dataset = RGBConcatDataset(
             feature_path=base_path,
             response_path=excel_path,
             model_config_path=config_path,
