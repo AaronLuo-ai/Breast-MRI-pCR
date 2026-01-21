@@ -1,4 +1,3 @@
-cat << 'EOF' > README.md
 # Breast MRI pCR Prediction
 
 [![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?style=flat&logo=pytorch&logoColor=white)](https://pytorch.org/)
