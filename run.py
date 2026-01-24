@@ -19,6 +19,12 @@ from sklearn.metrics import accuracy_score, roc_auc_score, f1_score, matthews_co
 from data.rgb_dataset import RGBConcatDataset, RGBStackDataset
 from model.mlp import PcrPredictor
 
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+
+EMBED_DIM = 384
+IMAGE_SIZE = 192
+
+
 def get_dist(labels):
     counts = np.bincount(labels)
     perc = (counts / len(labels)) * 100
@@ -40,7 +46,9 @@ def run_mlp_cross_validation(base_path, excel_path, config_path, ckpt_path,
             feature_path=base_path,
             response_path=excel_path,
             model_config_path=config_path,
-            checkpoint_path=ckpt_path
+            checkpoint_path=ckpt_path,
+            IMAGE_SIZE=IMAGE_SIZE,
+            EMBED_DIM=EMBED_DIM
         )
     else: 
         # RGB concatenation of Pre, Po1, Po2
@@ -48,7 +56,9 @@ def run_mlp_cross_validation(base_path, excel_path, config_path, ckpt_path,
             feature_path=base_path,
             response_path=excel_path,
             model_config_path=config_path,
-            checkpoint_path=ckpt_path
+            checkpoint_path=ckpt_path,
+            IMAGE_SIZE=IMAGE_SIZE,
+            EMBED_DIM=EMBED_DIM
         )
 
     cv_auc_scores = []
@@ -59,7 +69,7 @@ def run_mlp_cross_validation(base_path, excel_path, config_path, ckpt_path,
     for i in range(len(full_dataset)):
         feats, label = full_dataset[i] 
         raw_feat = feats.flatten() 
-        all_features.append(raw_feat.numpy())
+        all_features.append(raw_feat.detach().cpu().numpy())
         all_labels.append(label.item())
 
     X = np.array(all_features)
@@ -99,11 +109,12 @@ def run_mlp_cross_validation(base_path, excel_path, config_path, ckpt_path,
 
         train_loader = DataLoader(train_ds, batch_size=batch_size, sampler=None, shuffle=False, drop_last=True)
         val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, drop_last=True)
+        job_id = os.environ.get("SLURM_JOB_ID", "local")
 
         # 7. Logger & Model (input_dim is now 3456)
         wandb_logger = WandbLogger(
             project="Breast-MRI-pCR", 
-            name=f"fold_{fold+1}_lr_{lr}_bs_{batch_size}_rd_{residual_dropout}_hd_{head_dropout}_{dir_name}",
+            name=f"fold_{fold+1}_lr_{lr}_bs_{batch_size}_rd_{residual_dropout}_hd_{head_dropout}_{dir_name}_Job_{job_id}",
             group=f"LR_{lr}_BS_{batch_size}", # Grouping helps in the WandB UI
             job_type="grid_search"
         )
@@ -121,6 +132,7 @@ def run_mlp_cross_validation(base_path, excel_path, config_path, ckpt_path,
         
         # 8. Trainer
         trainer = L.Trainer(
+            enable_progress_bar=False,
             max_epochs=max_epochs,
             accelerator="auto",
             devices=1,
@@ -151,6 +163,15 @@ def run_mlp_cross_validation(base_path, excel_path, config_path, ckpt_path,
             **model.hparams, 
             "Batch Size": batch_size,
             "Max Epochs": max_epochs,
+            "Learning Rate": lr,
+            "Job ID": job_id,
+            "Weight Decay": weight_decay,
+            "Residual Dropout": residual_dropout,
+            "Head Dropout": head_dropout,
+            "Hidden Dim": hidden_dim,
+            "Input Dim": input_dim,
+            "Image Size": IMAGE_SIZE,
+            "Embedding Dim": EMBED_DIM,
             "Validation AUC": checkpoint_callback.best_model_score.item(),
             "Validation Loss": metrics.get("val_loss").item() if "val_loss" in metrics else "N/A",
             "Training AUC": metrics.get("train_auc").item() if "train_auc" in metrics else "N/A",
@@ -171,13 +192,11 @@ def run_mlp_cross_validation(base_path, excel_path, config_path, ckpt_path,
     avg_auc = np.mean(cv_auc_scores)
     std_auc = np.std(cv_auc_scores)
 
-    base_output_path = "/scratch/aaron.l/deterministic_output"
-    folder_name = f"{dir_name}_avg_auc_{avg_auc:.3f}_bs_{batch_size}_lr_{lr}_wd_{weight_decay}_rd_{residual_dropout}_hd_{head_dropout}"
+    base_output_path = "/scratch/aaron.l/Pre-contrast+Post-contrast1+Post-contrast2"
+    folder_name = f"{dir_name}_avg_auc_{avg_auc:.3f}_bs_{batch_size}_lr_{lr}_wd_{weight_decay}_rd_{residual_dropout}_hd_{head_dropout}_job_{job_id}"
     final_report_dir = os.path.join(base_output_path, folder_name)
     
-    # Create the directory
     os.makedirs(final_report_dir, exist_ok=True)
-    # Save each fold's report into this new directory
     for i, report in enumerate(all_fold_reports):
         file_name = f"fold_{report['Fold']}_auc_{report['Validation AUC']:.3f}.xlsx"
         save_path = os.path.join(final_report_dir, file_name)
@@ -188,12 +207,17 @@ def run_mlp_cross_validation(base_path, excel_path, config_path, ckpt_path,
     print(f"Individual Scores: {[round(s, 3) for s in cv_auc_scores]}")
     print(f"Mean AUC: {avg_auc:.3f}")
     print(f"Std Dev:  {std_auc:.3f}")
+    print(f"Job ID: {job_id}")
+    print(f"Image Size: {IMAGE_SIZE}, Embedding Dim: {EMBED_DIM}")
+    print(f"Residual Dropout: {residual_dropout}, Head Dropout: {head_dropout}, Hidden Dim: {hidden_dim}")
+    print(f"Max Epochs: {max_epochs}, Batch Size: {batch_size}, LR: {lr}, Weight Decay: {weight_decay}")
     print(f"Reportable Result: {avg_auc:.2f} ± {std_auc:.2f}")
     print(f"All reports saved in: {final_report_dir}")
     print("="*30)
 
 
 if __name__ == "__main__":
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--batch_size", type=int, default=4)
@@ -203,7 +227,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     run_mlp_cross_validation(
-        base_path="/home/aaron.l/FeatureExtraction/MriExtraction/mri_features",
+        base_path="/home/aaron.l/FeatureExtraction/MriExtraction/unprocessed/mri_features",
         excel_path="/home/aaron.l/FeatureExtraction/MriExtraction/MultimodalPilotDataset_v1_DEID_wImages_final.xlsx",
         config_path="/home/aaron.l/Pillar/model.config.yaml",
         ckpt_path="/home/aaron.l/Pillar/pillar-pretrain/model.safetensors",

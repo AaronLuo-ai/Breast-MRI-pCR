@@ -13,9 +13,10 @@ if external_path not in sys.path:
     sys.path.insert(0, external_path)
 from src.miniclip.multimodal_atlas import MultiModalAtlas
 
+# Hyperparameters section
 
-
-IMAGE_SIZE = 192
+IMAGE_SIZE = 192  # Adjusted image size
+EMBED_DIM = 384  # Embedding dimension from the vision model
 
 def get_pcr_label(raw_label, patient_id):
     # 1. Check for TRULY blank cells (now that 'None' is preserved as text)
@@ -43,7 +44,7 @@ def get_pcr_label(raw_label, patient_id):
 
         
 class RGBDataset(Dataset):
-    def __init__(self, feature_path, response_path, model_config_path, checkpoint_path, transform=None):
+    def __init__(self, feature_path, response_path, model_config_path, checkpoint_path, IMAGE_SIZE = 192, EMBED_DIM = 384, transform = None):
         self.feature_path = feature_path
         self.transform = transform
         
@@ -51,17 +52,20 @@ class RGBDataset(Dataset):
         with open(model_config_path, 'r') as f:
             model_config = yaml.safe_load(f)
             
-        self.model = MultiModalAtlas(args=None, model_config=model_config, embed_dim=384, multiscale_feats=True)
-        
-        # Load weights
+        self.model = MultiModalAtlas(args=None, model_config=model_config, embed_dim=EMBED_DIM, multiscale_feats=True)
         state_dict = load_file(checkpoint_path)
         self.model.load_state_dict(state_dict, strict=False)
         self.model.eval()
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model.to(self.device)
+
         # 2. Load Excel & Map Labels
         df = pd.read_excel(response_path, keep_default_na=False)
         self.response_data = df[df['MIRRIR_DCE-MRI'].str.contains(r'[a-zA-Z]', na=False)]
         # Dictionary to map 'Complete' -> 1, else -> 0
         label_lookup = self.response_data.set_index("MIRRIR_DCE-MRI")["pCR-Breast"].to_dict()
+        
         # 3. Filter for folders that have the required 3 timings
         self.samples = []
         unique_elements = sorted(self.response_data["MIRRIR_DCE-MRI"].dropna().unique())
@@ -123,8 +127,8 @@ class RGBDataset(Dataset):
 
 
 class RGBConcatDataset(RGBDataset):
-    def __init__(self, feature_path, response_path, model_config_path, checkpoint_path, transform=None):
-        super().__init__(feature_path, response_path, model_config_path, checkpoint_path, transform)
+    def __init__(self, feature_path, response_path, model_config_path, checkpoint_path, IMAGE_SIZE = 192, EMBED_DIM = 384, transform = None):
+        super().__init__(feature_path, response_path, model_config_path, checkpoint_path, IMAGE_SIZE, EMBED_DIM, transform)
     
     def __getitem__(self, idx):
         img_paths, label = self.samples[idx]
@@ -178,8 +182,8 @@ class RGBConcatDataset(RGBDataset):
 
 class RGBStackDataset(RGBDataset):
 
-    def __init__(self, feature_path, response_path, model_config_path, checkpoint_path, transform=None):
-        super().__init__(feature_path, response_path, model_config_path, checkpoint_path, transform)
+    def __init__(self, feature_path, response_path, model_config_path, checkpoint_path, IMAGE_SIZE = 192, EMBED_DIM = 384, transform = None):
+        super().__init__(feature_path, response_path, model_config_path, checkpoint_path, IMAGE_SIZE, EMBED_DIM, transform)
     
     def __getitem__(self, idx):
         img_paths, label = self.samples[idx]
